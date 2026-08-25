@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Reconstruct and verify project package
+      - name: Repair, reconstruct and verify project package
         shell: bash
         run: |
           set -euo pipefail
@@ -27,6 +27,7 @@ jobs:
           from pathlib import Path
           import base64
           import hashlib
+          import string
 
           expected_chunks = {
               "chunk-00": (5000, "21b96253e01f437d13229c3bc72d848a344df70f06934da763664dae0349526b"),
@@ -44,29 +45,77 @@ jobs:
               "chunk-12": (3320, "08ece68b56319de885eb04e39208aef6cec4d6d4dedbf0869172272807bb1f0f"),
           }
 
+          alphabet = (string.ascii_letters + string.digits + "+/").encode("ascii")
+
+          def digest(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def repair(data: bytes, expected_length: int, expected_digest: str):
+              # One missing Base64 character.
+              if len(data) == expected_length - 1:
+                  positions = [len(data), 0, *range(1, len(data))]
+                  for position in positions:
+                      left, right = data[:position], data[position:]
+                      for char in alphabet:
+                          candidate = left + bytes((char,)) + right
+                          if digest(candidate) == expected_digest:
+                              return candidate, f"inserted {chr(char)!r} at index {position}"
+
+              # One substituted Base64 character.
+              if len(data) == expected_length:
+                  candidate = bytearray(data)
+                  for position, original in enumerate(data):
+                      for char in alphabet:
+                          if char == original:
+                              continue
+                          candidate[position] = char
+                          if digest(candidate) == expected_digest:
+                              return bytes(candidate), (
+                                  f"replaced {chr(original)!r} with {chr(char)!r} "
+                                  f"at index {position}"
+                              )
+                      candidate[position] = original
+
+              # One superfluous Base64 character.
+              if len(data) == expected_length + 1:
+                  for position in range(len(data)):
+                      candidate = data[:position] + data[position + 1:]
+                      if digest(candidate) == expected_digest:
+                          return candidate, f"removed {chr(data[position])!r} at index {position}"
+
+              return None, None
+
           paths = sorted(Path(".bootstrap").glob("chunk-*"))
+          if [path.name for path in paths] != list(expected_chunks):
+              raise SystemExit("Unexpected bootstrap chunk set")
+
           parts = []
-          mismatches = []
           for path in paths:
-              text = path.read_text(encoding="utf-8")
-              digest = hashlib.sha256(text.encode("ascii")).hexdigest()
+              data = path.read_bytes()
               expected_length, expected_digest = expected_chunks[path.name]
-              status = "OK" if (len(text), digest) == (expected_length, expected_digest) else "MISMATCH"
-              print(f"{path.name}: chars={len(text)} sha256={digest} {status}")
-              if status != "OK":
-                  mismatches.append(path.name)
-              parts.append(text)
+              if (len(data), digest(data)) != (expected_length, expected_digest):
+                  repaired, action = repair(data, expected_length, expected_digest)
+                  if repaired is None:
+                      raise SystemExit(f"Unable to repair {path.name}")
+                  data = repaired
+                  path.write_bytes(data)
+                  print(f"{path.name}: repaired — {action}")
 
-          if mismatches:
-              raise SystemExit(f"Chunk verification failed: {', '.join(mismatches)}")
+              if (len(data), digest(data)) != (expected_length, expected_digest):
+                  raise SystemExit(f"Verification failed for {path.name}")
+              print(f"{path.name}: verified")
+              parts.append(data)
 
-          encoded = "".join(parts)
+          encoded = b"".join(parts)
           archive = base64.b64decode(encoded, validate=True)
-          digest = hashlib.sha256(archive).hexdigest()
-          expected = "bed0bf020fe38691deb18a097bf6976ca00488f2e6ce097c04258f073b0bf11b"
-          print(f"archive_bytes={len(archive)} archive_sha256={digest}")
-          if digest != expected:
-              raise SystemExit(f"Archive checksum mismatch: expected {expected}, got {digest}")
+          archive_digest = digest(archive)
+          expected_archive_digest = "bed0bf020fe38691deb18a097bf6976ca00488f2e6ce097c04258f073b0bf11b"
+          print(f"archive_bytes={len(archive)} archive_sha256={archive_digest}")
+          if archive_digest != expected_archive_digest:
+              raise SystemExit(
+                  f"Archive checksum mismatch: expected {expected_archive_digest}, "
+                  f"got {archive_digest}"
+              )
 
           Path("/tmp/stadtpilot.tar.gz").write_bytes(archive)
           PY
