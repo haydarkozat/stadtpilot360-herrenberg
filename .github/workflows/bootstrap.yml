@@ -27,24 +27,44 @@ jobs:
           from pathlib import Path
           import base64
           import hashlib
-          import string
+
+          expected_chunks = {
+              "chunk-00": (5000, "21b96253e01f437d13229c3bc72d848a344df70f06934da763664dae0349526b"),
+              "chunk-01": (5000, "f56f24a9acbca8cde424b9c14b77eead770b030f67d6d391714a888bfbfe31d0"),
+              "chunk-02": (5000, "99b59d871a7f180a54c2a4af188c3ecbea1a99babbb5b8eeccf34633b450ec6f"),
+              "chunk-03": (5000, "4c367ce0a41c0d125271d4372715586748a94a0a5f7227a98ad2a811fa335d03"),
+              "chunk-04": (5000, "7b6196b9eba7c6059b5009ed74b3cb4434b928ccf6e9b5aafbb4d2fd6880a3ba"),
+              "chunk-05": (5000, "30394916927b704f8fe7334bb56fcea0b8db1b923940a27e2c2edb408c58b776"),
+              "chunk-06": (5000, "631d2e6475a777291da2a48d362ede1d29b2968330258b88a52c73becaf93311"),
+              "chunk-07": (5000, "3e1ae122f124918fc8979af0f746fafd79f7781630c1b82bad58ef996a74115e"),
+              "chunk-08": (5000, "798128bb080727b5a9a700b4709e7d559a4f3566d26798cd6acff678b3e908cc"),
+              "chunk-09": (5000, "735e05bcf79b2798659c53f6d79286c3f7e0e3f5321600b9dc5b6fd231f99707"),
+              "chunk-10": (5000, "5d38aaff5cf66348a6b14f3088899e7623eb3b73e4ac4c3bc6dc4fe1ccc2ab9d"),
+              "chunk-11": (5000, "4bc91c0d0829f76d023b0b8489220e1dcbac9714e4e4a927177b57193a66a5dc"),
+              "chunk-12": (3320, "08ece68b56319de885eb04e39208aef6cec4d6d4dedbf0869172272807bb1f0f"),
+          }
 
           paths = sorted(Path(".bootstrap").glob("chunk-*"))
-          raw = "".join(path.read_text(encoding="utf-8") for path in paths)
-          allowed = set(string.ascii_letters + string.digits + "+/=")
-          invalid = [(index, repr(char)) for index, char in enumerate(raw) if char not in allowed]
-          clean = "".join(char for char in raw if char in allowed)
+          parts = []
+          mismatches = []
+          for path in paths:
+              text = path.read_text(encoding="utf-8")
+              digest = hashlib.sha256(text.encode("ascii")).hexdigest()
+              expected_length, expected_digest = expected_chunks[path.name]
+              status = "OK" if (len(text), digest) == (expected_length, expected_digest) else "MISMATCH"
+              print(f"{path.name}: chars={len(text)} sha256={digest} {status}")
+              if status != "OK":
+                  mismatches.append(path.name)
+              parts.append(text)
 
-          print(f"chunks={len(paths)} raw_chars={len(raw)} invalid_chars={len(invalid)}")
-          if invalid:
-              print(f"first_invalid={invalid[:20]}")
-          print(f"clean_chars={len(clean)} modulo_4={len(clean) % 4}")
-          print(f"base64_sha256={hashlib.sha256(clean.encode('ascii')).hexdigest()}")
+          if mismatches:
+              raise SystemExit(f"Chunk verification failed: {', '.join(mismatches)}")
 
-          archive = base64.b64decode(clean, validate=True)
+          encoded = "".join(parts)
+          archive = base64.b64decode(encoded, validate=True)
           digest = hashlib.sha256(archive).hexdigest()
-          print(f"archive_bytes={len(archive)} archive_sha256={digest}")
           expected = "bed0bf020fe38691deb18a097bf6976ca00488f2e6ce097c04258f073b0bf11b"
+          print(f"archive_bytes={len(archive)} archive_sha256={digest}")
           if digest != expected:
               raise SystemExit(f"Archive checksum mismatch: expected {expected}, got {digest}")
 
