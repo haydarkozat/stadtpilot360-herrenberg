@@ -17,15 +17,39 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Reconstruct and verify project package
         shell: bash
         run: |
           set -euo pipefail
-          cat .bootstrap/chunk-* > /tmp/stadtpilot.tar.gz.b64
-          base64 --decode /tmp/stadtpilot.tar.gz.b64 > /tmp/stadtpilot.tar.gz
-          echo "bed0bf020fe38691deb18a097bf6976ca00488f2e6ce097c04258f073b0bf11b  /tmp/stadtpilot.tar.gz" | sha256sum --check -
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+          import hashlib
+          import string
+
+          paths = sorted(Path(".bootstrap").glob("chunk-*"))
+          raw = "".join(path.read_text(encoding="utf-8") for path in paths)
+          allowed = set(string.ascii_letters + string.digits + "+/=")
+          invalid = [(index, repr(char)) for index, char in enumerate(raw) if char not in allowed]
+          clean = "".join(char for char in raw if char in allowed)
+
+          print(f"chunks={len(paths)} raw_chars={len(raw)} invalid_chars={len(invalid)}")
+          if invalid:
+              print(f"first_invalid={invalid[:20]}")
+          print(f"clean_chars={len(clean)} modulo_4={len(clean) % 4}")
+          print(f"base64_sha256={hashlib.sha256(clean.encode('ascii')).hexdigest()}")
+
+          archive = base64.b64decode(clean, validate=True)
+          digest = hashlib.sha256(archive).hexdigest()
+          print(f"archive_bytes={len(archive)} archive_sha256={digest}")
+          expected = "bed0bf020fe38691deb18a097bf6976ca00488f2e6ce097c04258f073b0bf11b"
+          if digest != expected:
+              raise SystemExit(f"Archive checksum mismatch: expected {expected}, got {digest}")
+
+          Path("/tmp/stadtpilot.tar.gz").write_bytes(archive)
+          PY
 
       - name: Install project files
         shell: bash
