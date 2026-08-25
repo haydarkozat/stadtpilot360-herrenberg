@@ -51,7 +51,6 @@ jobs:
               return hashlib.sha256(data).hexdigest()
 
           def repair(data: bytes, expected_length: int, expected_digest: str):
-              # One missing Base64 character.
               if len(data) == expected_length - 1:
                   positions = [len(data), 0, *range(1, len(data))]
                   for position in positions:
@@ -61,7 +60,6 @@ jobs:
                           if digest(candidate) == expected_digest:
                               return candidate, f"inserted {chr(char)!r} at index {position}"
 
-              # One substituted Base64 character.
               if len(data) == expected_length:
                   candidate = bytearray(data)
                   for position, original in enumerate(data):
@@ -76,7 +74,6 @@ jobs:
                               )
                       candidate[position] = original
 
-              # One superfluous Base64 character.
               if len(data) == expected_length + 1:
                   for position in range(len(data)):
                       candidate = data[:position] + data[position + 1:]
@@ -125,15 +122,14 @@ jobs:
         run: |
           set -euo pipefail
           tar -xzf /tmp/stadtpilot.tar.gz -C .
-          rm -rf .bootstrap
-          rm -f .github/workflows/bootstrap.yml
+          rm -f .github/workflows/pages.yml
 
-      - name: Commit project
+      - name: Commit project files
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add README.md .gitignore .nojekyll LICENSE index.html assets data docs
           git commit -m "Launch StadtPilot 360 application"
           git push
